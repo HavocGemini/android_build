@@ -220,13 +220,13 @@ endif
 # are specific to the user's build configuration.
 include $(BUILD_SYSTEM)/envsetup.mk
 
+ifeq ($(BOARD_USES_QCOM_HARDWARE),true)
+include $(TOPDIR)vendor/havoc/build/core/BoardConfigQcom.mk
+endif
+
 # Pruned directory options used when using findleaves.py
 # See envsetup.mk for a description of SCAN_EXCLUDE_DIRS
 FIND_LEAVES_EXCLUDES := $(addprefix --prune=, $(SCAN_EXCLUDE_DIRS) .repo .git)
-
-# General entries for project pathmap.  Any entries listed here should
-# be device and hardware independent.
-$(call project-set-path-variant,ril,TARGET_RIL_VARIANT,hardware/ril)
 
 -include vendor/extra/BoardConfigExtra.mk
 ifneq ($(HAVOC_BUILD),)
@@ -415,9 +415,9 @@ TARGET_CPU_ABI_LIST_32_BIT := $(subst $(space),$(comma),$(strip $(TARGET_CPU_ABI
 TARGET_CPU_ABI_LIST_64_BIT := $(subst $(space),$(comma),$(strip $(TARGET_CPU_ABI_LIST_64_BIT)))
 
 # GCC version selection
-TARGET_GCC_VERSION := 4.9
+TARGET_GCC_VERSION := 8.x
 ifdef TARGET_2ND_ARCH
-2ND_TARGET_GCC_VERSION := 4.9
+2ND_TARGET_GCC_VERSION := 4.9u
 endif
 
 # Normalize WITH_STATIC_ANALYZER
@@ -934,6 +934,9 @@ PLATFORM_SEPOLICY_COMPAT_VERSIONS := \
     PLATFORM_SEPOLICY_COMPAT_VERSIONS \
     PLATFORM_SEPOLICY_VERSION \
     TOT_SEPOLICY_VERSION \
+
+# Rules for QCOM targets
+include vendor/havoc/build/core/qcom_target.mk
 
 # ###############################################################
 # Set up final options.
