@@ -1420,6 +1420,7 @@ def WriteBlockIncrementalOTAPackage(target_zip, source_zip, output_file):
       source_version=source_api_version,
       target_zip=target_zip,
       target_version=target_api_version,
+      input_zip=target_zip,
       output_zip=output_zip,
       script=script,
       metadata=metadata,

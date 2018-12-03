@@ -33,20 +33,24 @@ endif
 
 my_soong_problems :=
 
-# The proper dependency for kernel headers is INSTALLED_KERNEL_HEADERS.
-# However, there are many instances of the old style dependencies in the
-# source tree.  Fix them up and warn the user.
-ifneq (,$(findstring $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr,$(LOCAL_ADDITIONAL_DEPENDENCIES)))
-  LOCAL_ADDITIONAL_DEPENDENCIES := $(patsubst $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr,INSTALLED_KERNEL_HEADERS,$(LOCAL_ADDITIONAL_DEPENDENCIES))
+# Automatically replace the old-style kernel header include with a dependency
+# on the generated_kernel_headers header library
+ifneq (,$(findstring $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include,$(LOCAL_C_INCLUDES)))
+  LOCAL_C_INCLUDES := $(patsubst $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include,,$(LOCAL_C_INCLUDES))
+  LOCAL_HEADER_LIBRARIES += generated_kernel_headers
 endif
 
-# Many qcom modules don't correctly set a dependency on the kernel headers. Fix it for them,
-# but warn the user.
-ifneq (,$(findstring $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include,$(LOCAL_C_INCLUDES)))
-  ifeq (,$(findstring INSTALLED_KERNEL_HEADERS,$(LOCAL_ADDITIONAL_DEPENDENCIES)))
-    $(warning $(LOCAL_MODULE) uses kernel headers, but does not depend on them!)
-    LOCAL_ADDITIONAL_DEPENDENCIES += INSTALLED_KERNEL_HEADERS
-  endif
+# Some qcom binaries use this weird -isystem include...
+ifneq (,$(findstring $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include,$(LOCAL_CFLAGS)))
+  LOCAL_CFLAGS := $(patsubst -isystem $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr/include,,$(LOCAL_CFLAGS))
+  LOCAL_HEADER_LIBRARIES += generated_kernel_headers
+endif
+
+# Remove KERNEL_OBJ/usr from any LOCAL_ADDITIONAL_DEPENDENCIES, we will
+# just include generated_kernel_headers which already has the proper
+# dependency
+ifneq (,$(findstring $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr,$(LOCAL_ADDITIONAL_DEPENDENCIES)))
+  LOCAL_ADDITIONAL_DEPENDENCIES := $(patsubst $(TARGET_OUT_INTERMEDIATES)/KERNEL_OBJ/usr,,$(LOCAL_ADDITIONAL_DEPENDENCIES))
 endif
 
 # The following LOCAL_ variables will be modified in this file.
@@ -379,6 +383,25 @@ else ifeq ($(my_clang),)
     my_clang := true
 endif
 
+my_sdclang := $(strip $(LOCAL_SDCLANG))
+my_sdclang_2 := $(strip $(LOCAL_SDCLANG_2))
+ifeq ($(my_sdclang),true)
+    ifeq ($(my_sdclang_2),true)
+        $(error LOCAL_SDCLANG and LOCAL_SDCLANG_2 can not be set to true at the same time!)
+    endif
+    ifneq ($(TARGET_USE_SDCLANG),true)
+        my_sdclang := false
+    endif
+endif
+
+ifeq ($(SDCLANG),true)
+    ifeq ($(my_sdclang),)
+        ifeq ($(TARGET_USE_SDCLANG),true)
+            my_sdclang := true
+        endif
+    endif
+endif
+
 ifeq ($(LOCAL_C_STD),)
     my_c_std_version := $(DEFAULT_C_STD_VERSION)
 else ifeq ($(LOCAL_C_STD),experimental)
@@ -533,6 +556,30 @@ my_target_global_cflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)CLANG_$(my_prefix)GLOBA
 my_target_global_conlyflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)CLANG_$(my_prefix)GLOBAL_CONLYFLAGS) $(my_c_std_conlyflags)
 my_target_global_cppflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)CLANG_$(my_prefix)GLOBAL_CPPFLAGS) $(my_cpp_std_cppflags)
 my_target_global_ldflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)CLANG_$(my_prefix)GLOBAL_LDFLAGS)
+    ifeq ($(my_sdclang),true)
+        SDCLANG_PRECONFIGURED_FLAGS := -Wno-vectorizer-no-neon
+
+        ifeq ($(LOCAL_SDCLANG_LTO), true)
+        ifneq ($(LOCAL_MODULE_CLASS), STATIC_LIBRARIES)
+
+            ifeq ($(strip $(LOCAL_SDCLANG_LTO_LDFLAGS)),)
+                LOCAL_SDCLANG_LTO_LDFLAGS := $(SDCLANG_COMMON_FLAGS)
+            endif
+
+            SDCLANG_PRECONFIGURED_FLAGS += -fuse-ld=qcld -flto
+            my_target_global_ldflags += -fuse-ld=qcld -flto $(LOCAL_SDCLANG_LTO_LDFLAGS)
+        endif
+        endif
+        my_target_global_cflags += $(SDCLANG_COMMON_FLAGS) $(SDCLANG_PRECONFIGURED_FLAGS)
+        SDCLANG_PRECONFIGURED_FLAGS :=
+
+        ifeq ($(strip $(my_cc)),)
+            my_cc := $(my_cc_wrapper) $(SDCLANG_PATH)/clang
+        endif
+        ifeq ($(strip $(my_cxx)),)
+            my_cxx := $(my_cxx_wrapper) $(SDCLANG_PATH)/clang++
+        endif
+    endif
 else
 my_target_global_cflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)$(my_prefix)GLOBAL_CFLAGS)
 my_target_global_conlyflags := $($(LOCAL_2ND_ARCH_VAR_PREFIX)$(my_prefix)GLOBAL_CONLYFLAGS) $(my_c_std_conlyflags)
@@ -855,7 +902,7 @@ my_proto_source_suffix := .c
 my_proto_c_includes := external/nanopb-c
 my_protoc_flags := --nanopb_out=$(proto_gen_dir) \
     --plugin=external/nanopb-c/generator/protoc-gen-nanopb
-my_protoc_deps := $(NANOPB_SRCS) $(proto_sources_fullpath:%.proto=%.options)
+my_protoc_deps := $(NANOPB_SRCS) $(wildcard $(proto_sources_fullpath:%.proto=%.options))
 else
 my_proto_source_suffix := $(LOCAL_CPP_EXTENSION)
 ifneq ($(my_proto_source_suffix),.cc)
@@ -1515,9 +1562,21 @@ ifeq ($(LOCAL_SDK_VERSION)$(LOCAL_USE_VNDK),)
   my_c_includes += $(JNI_H_INCLUDE)
 endif
 
+# Find $1 in the exception project list.
+define find_in_cincludes_exception_projects
+$(subst $(space),, \
+  $(foreach project,$(TARGET_CINCLUDES_EXCEPTION_PROJECTS), \
+    $(if $(filter $(project)%,$(1)),$(project)) \
+  ) \
+)
+endef
+
 my_outside_includes := $(filter-out $(OUT_DIR)/%,$(filter /%,$(my_c_includes)))
 ifneq ($(my_outside_includes),)
-$(error $(LOCAL_MODULE_MAKEFILE): $(LOCAL_MODULE): C_INCLUDES must be under the source or output directories: $(my_outside_includes))
+# Further filter out optional exceptions
+  ifeq ($(call find_in_cincludes_exception_projects,$(LOCAL_MODULE_MAKEFILE)),)
+    $(error $(LOCAL_MODULE_MAKEFILE): $(LOCAL_MODULE): C_INCLUDES must be under the source or output directories: $(my_outside_includes))
+  endif
 endif
 
 # all_objects includes gen_o_objects which were part of LOCAL_GENERATED_SOURCES;
@@ -1619,6 +1678,9 @@ built_whole_libraries := \
 installed_static_library_notice_file_targets := \
     $(foreach lib,$(my_static_libraries) $(my_whole_static_libraries), \
       NOTICE-$(if $(LOCAL_IS_HOST_MODULE),HOST,TARGET)-STATIC_LIBRARIES-$(lib))
+
+$(notice_target): | $(installed_static_library_notice_file_targets)
+$(LOCAL_INSTALLED_MODULE): | $(notice_target)
 
 # Default is -fno-rtti.
 ifeq ($(strip $(LOCAL_RTTI_FLAG)),)
@@ -1815,11 +1877,6 @@ all_libraries := \
     $(my_system_shared_libraries_fullpath) \
     $(built_static_libraries) \
     $(built_whole_libraries)
-
-# Also depend on the notice files for any static libraries that
-# are linked into this module.  This will force them to be installed
-# when this module is.
-$(LOCAL_INSTALLED_MODULE): | $(installed_static_library_notice_file_targets)
 
 ###########################################################
 # Export includes

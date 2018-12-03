@@ -1255,6 +1255,7 @@ define transform-cpp-to-o
 $(if $(PRIVATE_TIDY_CHECKS),$(clang-tidy-cpp))
 $(hide) $(RELATIVE_PWD) $(PRIVATE_CXX) \
   $(transform-cpp-to-o-compiler-args) \
+  $(if $(findstring $(SDCLANG_PATH),$(PRIVATE_CXX)),$(SDCLANG_COMMON_FLAGS)) \
   -MD -MF $(patsubst %.o,%.d,$@) -o $@ $<
 endef
 endif
@@ -1303,6 +1304,7 @@ define transform-c-to-o
 $(if $(PRIVATE_TIDY_CHECKS),$(clang-tidy-c))
 $(hide) $(RELATIVE_PWD) $(PRIVATE_CC) \
   $(transform-c-to-o-compiler-args) \
+  $(if $(findstring $(SDCLANG_PATH),$(PRIVATE_CC)),$(SDCLANG_COMMON_FLAGS)) \
   -MD -MF $(patsubst %.o,%.d,$@) -o $@ $<
 endef
 endif
@@ -1312,6 +1314,7 @@ define transform-s-to-o
 @mkdir -p $(dir $@)
 $(RELATIVE_PWD) $(PRIVATE_CC) \
   $(call transform-c-or-s-to-o-compiler-args, $(PRIVATE_ASFLAGS)) \
+  $(if $(findstring $(SDCLANG_PATH),$(PRIVATE_CC)),$(SDCLANG_COMMON_FLAGS)) \
   -MD -MF $(patsubst %.o,%.d,$@) -o $@ $<
 endef
 
@@ -1854,7 +1857,7 @@ if $(PRIVATE_STRIP) --strip-all -R .comment $< -o $@; then \
   $(PRIVATE_OBJCOPY) -S --remove-section .gdb_index --remove-section .comment --keep-symbols=$@.keep_symbols $@.mini_debuginfo && \
   $(PRIVATE_OBJCOPY) --rename-section saved_debug_frame=.debug_frame $@.mini_debuginfo && \
   rm -f $@.mini_debuginfo.xz && \
-  xz $@.mini_debuginfo && \
+  $(XZ) $@.mini_debuginfo && \
   $(PRIVATE_OBJCOPY) --add-section .gnu_debugdata=$@.mini_debuginfo.xz $@; \
 else \
   cp -f $< $@; \
@@ -2295,12 +2298,9 @@ $(hide) if [ -s $(PRIVATE_JAVA_SOURCE_LIST) -o -n "$(PRIVATE_SRCJARS)" ] ; then 
     $(JAVA) -jar $(TURBINE) \
     --output $@.premerged --temp_dir $(dir $@)/classes-turbine \
     --sources \@$(PRIVATE_JAVA_SOURCE_LIST) --source_jars $(PRIVATE_SRCJARS) \
-    --javacopts $(PRIVATE_JAVACFLAGS) $(COMMON_JDK_FLAGS) \
-    $(addprefix --bootclasspath ,$(strip \
-         $(call normalize-path-list,$(PRIVATE_BOOTCLASSPATH)) \
-         $(PRIVATE_EMPTY_BOOTCLASSPATH))) \
-    $(addprefix --classpath ,$(strip \
-        $(call normalize-path-list,$(PRIVATE_ALL_JAVA_HEADER_LIBRARIES)))) \
+    --javacopts $(PRIVATE_JAVACFLAGS) $(COMMON_JDK_FLAGS) -- \
+    $(addprefix --bootclasspath ,$(strip $(PRIVATE_BOOTCLASSPATH))) \
+    $(addprefix --classpath ,$(strip $(PRIVATE_ALL_JAVA_HEADER_LIBRARIES))) \
     || ( rm -rf $(dir $@)/classes-turbine ; exit 41 ) && \
     $(MERGE_ZIPS) -j --ignore-duplicates -stripDir META-INF $@.tmp $@.premerged $(call reverse-list,$(PRIVATE_STATIC_JAVA_HEADER_LIBRARIES)) ; \
 else \
@@ -2358,52 +2358,15 @@ define codename-or-sdk-to-sdk
 $(if $(filter $(1),$(PLATFORM_VERSION_CODENAME)),10000,$(1))
 endef
 
-# --add-opens is required because desugar reflects via java.lang.invoke.MethodHandles.Lookup
-define desugar-classes-jar
-@echo Desugar: $@
-@mkdir -p $(dir $@)
-$(hide) rm -f $@ $@.tmp
-@rm -rf $(dir $@)/desugar_dumped_classes
-@mkdir $(dir $@)/desugar_dumped_classes
-$(hide) $(JAVA) \
-    $(if $(USE_OPENJDK9),--add-opens java.base/java.lang.invoke=ALL-UNNAMED,) \
-    -Djdk.internal.lambda.dumpProxyClasses=$(abspath $(dir $@))/desugar_dumped_classes \
-    -jar $(DESUGAR) \
-    $(addprefix --bootclasspath_entry ,$(PRIVATE_BOOTCLASSPATH)) \
-    $(addprefix --classpath_entry ,$(PRIVATE_SHARED_JAVA_HEADER_LIBRARIES)) \
-    --min_sdk_version $(call codename-or-sdk-to-sdk,$(PRIVATE_MIN_SDK_VERSION)) \
-    --allow_empty_bootclasspath \
-    $(if $(filter --core-library,$(PRIVATE_DX_FLAGS)),--core_library) \
-    -i $< -o $@.tmp
-    mv $@.tmp $@
-endef
-
 
 define transform-classes.jar-to-dex
-@echo "target Dex: $(PRIVATE_MODULE)"
-@mkdir -p $(dir $@)
-$(hide) rm -f $(dir $@)classes*.dex
-$(hide) $(DX_COMMAND) \
-    --dex --output=$(dir $@) \
-    --min-sdk-version=$(PRIVATE_MIN_SDK_VERSION) \
-    $(if $(NO_OPTIMIZE_DX), \
-        --no-optimize) \
-    $(if $(GENERATE_DEX_DEBUG), \
-	    --debug --verbose \
-	    --dump-to=$(@:.dex=.lst) \
-	    --dump-width=1000) \
-    $(PRIVATE_DX_FLAGS) \
-    $<
-endef
-
-
-define transform-classes-d8.jar-to-dex
 @echo "target Dex: $(PRIVATE_MODULE)"
 @mkdir -p $(dir $@)
 $(hide) rm -f $(dir $@)classes*.dex $(dir $@)d8_input.jar
 $(hide) $(ZIP2ZIP) -j -i $< -o $(dir $@)d8_input.jar "**/*.class"
 $(hide) $(DX_COMMAND) \
     --output $(dir $@) \
+    $(addprefix --lib ,$(PRIVATE_D8_LIBS)) \
     --min-api $(PRIVATE_MIN_SDK_VERSION) \
     $(subst --main-dex-list=, --main-dex-list , \
         $(filter-out --core-library --multi-dex --minimal-main-dex,$(PRIVATE_DX_FLAGS))) \
@@ -2816,34 +2779,21 @@ $(2): $(1) $(HIDDENAPI) $(SOONG_ZIP) $(MERGE_ZIPS) $(INTERNAL_PLATFORM_HIDDENAPI
 		$(2) $${PRIVATE_FOLDER}/classes.dex.jar $(1)
 endef
 
-###########################################################
-## Commands to call Proguard
-###########################################################
-ifdef TARGET_OPENJDK9
-define transform-jar-to-proguard
-@echo Skipping Proguard: $< $@
-$(hide) cp '$<' $@
-endef
-else
-define transform-jar-to-proguard
-@echo Proguard: $@
-$(hide) $(PROGUARD) -injars $< -outjars $@ $(PRIVATE_PROGUARD_FLAGS) \
-    $(addprefix -injars , $(PRIVATE_EXTRA_INPUT_JAR))
-endef
-endif
-
 
 ###########################################################
 ## Commands to call R8
 ###########################################################
 define transform-jar-to-dex-r8
 @echo R8: $@
+$(hide) rm -f $(PRIVATE_PROGUARD_DICTIONARY)
 $(hide) $(R8_COMPAT_PROGUARD) -injars '$<' \
     --min-api $(PRIVATE_MIN_SDK_VERSION) \
+    --no-data-resources \
     --force-proguard-compatibility --output $(subst classes.dex,,$@) \
     $(PRIVATE_PROGUARD_FLAGS) \
     $(addprefix -injars , $(PRIVATE_EXTRA_INPUT_JAR)) \
     $(PRIVATE_DX_FLAGS)
+$(hide) touch $(PRIVATE_PROGUARD_DICTIONARY)
 endef
 
 ###########################################################

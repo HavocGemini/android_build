@@ -224,10 +224,6 @@ include $(BUILD_SYSTEM)/envsetup.mk
 # See envsetup.mk for a description of SCAN_EXCLUDE_DIRS
 FIND_LEAVES_EXCLUDES := $(addprefix --prune=, $(SCAN_EXCLUDE_DIRS) .repo .git)
 
-# General entries for project pathmap.  Any entries listed here should
-# be device and hardware independent.
-$(call project-set-path-variant,ril,TARGET_RIL_VARIANT,hardware/ril)
-
 -include vendor/extra/BoardConfigExtra.mk
 ifneq ($(HAVOC_BUILD),)
 include vendor/havoc/config/BoardConfigHavoc.mk
@@ -415,9 +411,9 @@ TARGET_CPU_ABI_LIST_32_BIT := $(subst $(space),$(comma),$(strip $(TARGET_CPU_ABI
 TARGET_CPU_ABI_LIST_64_BIT := $(subst $(space),$(comma),$(strip $(TARGET_CPU_ABI_LIST_64_BIT)))
 
 # GCC version selection
-TARGET_GCC_VERSION := 4.9
+TARGET_GCC_VERSION := 8.x
 ifdef TARGET_2ND_ARCH
-2ND_TARGET_GCC_VERSION := 4.9
+2ND_TARGET_GCC_VERSION := 4.9u
 endif
 
 # Normalize WITH_STATIC_ANALYZER
@@ -566,17 +562,6 @@ endif
 
 USE_PREBUILT_SDK_TOOLS_IN_PLACE := true
 
-# Work around for b/68406220
-# This should match the soong version.
-ifndef USE_D8
-  USE_D8 := true
-endif
-
-# Default R8 behavior when USE_R8 is not specified.
-ifndef USE_R8
-  USE_R8 := false
-endif
-
 #
 # Tools that are prebuilts for TARGET_BUILD_APPS
 #
@@ -584,7 +569,6 @@ ifeq (,$(TARGET_BUILD_APPS)$(filter true,$(TARGET_BUILD_PDK)))
   AIDL := $(HOST_OUT_EXECUTABLES)/aidl
   AAPT := $(HOST_OUT_EXECUTABLES)/aapt
   AAPT2 := $(HOST_OUT_EXECUTABLES)/aapt2
-  DESUGAR := $(HOST_OUT_JAVA_LIBRARIES)/desugar.jar
   MAINDEXCLASSES := $(HOST_OUT_EXECUTABLES)/mainDexClasses
   SIGNAPK_JAR := $(HOST_OUT_JAVA_LIBRARIES)/signapk$(COMMON_JAVA_PACKAGE_SUFFIX)
   SIGNAPK_JNI_LIBRARY_PATH := $(HOST_OUT_SHARED_LIBRARIES)
@@ -594,7 +578,6 @@ else # TARGET_BUILD_APPS || TARGET_BUILD_PDK
   AIDL := $(prebuilt_build_tools_bin)/aidl
   AAPT := $(prebuilt_sdk_tools_bin)/aapt
   AAPT2 := $(prebuilt_sdk_tools_bin)/aapt2
-  DESUGAR := $(prebuilt_build_tools_jars)/desugar.jar
   MAINDEXCLASSES := $(prebuilt_sdk_tools)/mainDexClasses
   SIGNAPK_JAR := $(prebuilt_sdk_tools)/lib/signapk$(COMMON_JAVA_PACKAGE_SUFFIX)
   SIGNAPK_JNI_LIBRARY_PATH := $(prebuilt_sdk_tools)/$(HOST_OS)/lib64
@@ -622,6 +605,7 @@ SOONG_JAVAC_WRAPPER := $(SOONG_HOST_OUT_EXECUTABLES)/soong_javac_wrapper
 SOONG_ZIP := $(SOONG_HOST_OUT_EXECUTABLES)/soong_zip
 MERGE_ZIPS := $(SOONG_HOST_OUT_EXECUTABLES)/merge_zips
 XMLLINT := $(SOONG_HOST_OUT_EXECUTABLES)/xmllint
+XZ := $(prebuilt_build_tools_bin)/xz
 ZIP2ZIP := $(SOONG_HOST_OUT_EXECUTABLES)/zip2zip
 ZIPTIME := $(prebuilt_build_tools_bin)/ziptime
 
@@ -934,6 +918,9 @@ PLATFORM_SEPOLICY_COMPAT_VERSIONS := \
     PLATFORM_SEPOLICY_COMPAT_VERSIONS \
     PLATFORM_SEPOLICY_VERSION \
     TOT_SEPOLICY_VERSION \
+
+# Rules for QCOM targets
+include vendor/havoc/build/core/qcom_target.mk
 
 # ###############################################################
 # Set up final options.

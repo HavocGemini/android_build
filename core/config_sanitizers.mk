@@ -245,6 +245,7 @@ endif
 ifneq ($(my_sanitize),)
   fsanitize_arg := $(subst $(space),$(comma),$(my_sanitize))
   my_cflags += -fsanitize=$(fsanitize_arg)
+  my_asflags += -fsanitize=$(fsanitize_arg)
 
   ifdef LOCAL_IS_HOST_MODULE
     my_cflags += -fno-sanitize-recover=all
@@ -260,11 +261,16 @@ ifneq ($(my_sanitize),)
 endif
 
 ifneq ($(filter cfi,$(my_sanitize)),)
+  # FIXME: revert this once the cfi sanitizer issue is fixed
+  my_sdclang := false
+  my_sdclang_2 := false
+
   # __cfi_check needs to be built as Thumb (see the code in linker_cfi.cpp).
   # LLVM is not set up to do this on a function basis, so force Thumb on the
   # entire module.
   LOCAL_ARM_MODE := thumb
   my_cflags += $(CFI_EXTRA_CFLAGS)
+  my_asflags += $(CFI_EXTRA_ASFLAGS)
   # Only append the default visibility flag if -fvisibility has not already been
   # set to hidden.
   ifeq ($(filter -fvisibility=hidden,$(LOCAL_CFLAGS)),)
@@ -280,6 +286,12 @@ ifneq ($(filter cfi,$(my_sanitize)),)
         # Apply the version script to non-static executables
         my_ldflags += -Wl,--version-script,build/soong/cc/config/cfi_exports.map
         LOCAL_ADDITIONAL_DEPENDENCIES += build/soong/cc/config/cfi_exports.map
+  endif
+  ifneq ($(filter true,$(my_sdclang) $(my_sdclang2)),)
+    SDCLANG_UNKNOWN_FLAGS := -Wl,-plugin-opt,O1
+    my_ldflags := $(filter-out $(SDCLANG_UNKNOWN_FLAGS),$(my_ldflags))
+    my_cflags += -fuse-ld=qcld
+    my_ldflags += -fuse-ld=qcld -Wl,-m,aarch64linux_androideabi
   endif
 endif
 
