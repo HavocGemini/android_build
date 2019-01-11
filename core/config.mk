@@ -918,10 +918,7 @@ PLATFORM_SEPOLICY_COMPAT_VERSIONS := \
 .KATI_READONLY := \
     PLATFORM_SEPOLICY_COMPAT_VERSIONS \
     PLATFORM_SEPOLICY_VERSION \
-    TOT_SEPOLICY_VERSION \
-
-# Rules for QCOM targets
-include vendor/havoc/build/core/qcom_target.mk
+    TOT_SEPOLICY_VERSION
 
 # If true, kernel configuration requirements are present in OTA package (and will be enforced
 # during OTA). Otherwise, kernel configuration requirements are enforced in VTS.
